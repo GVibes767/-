@@ -1,0 +1,459 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged,
+  signInWithCustomToken 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  setDoc, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  query, 
+  where,
+  serverTimestamp,
+  deleteDoc
+} from 'firebase/firestore';
+import { 
+  Users, 
+  Heart, 
+  Award, 
+  MessageSquare, 
+  User, 
+  Plus, 
+  Search, 
+  CheckCircle, 
+  Flame,
+  Briefcase,
+  HelpCircle
+} from 'lucide-react';
+
+// --- CONFIGURATION ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'connection-community-v1';
+
+const SPIRITUAL_GIFTS = [
+  "Администрирование", "Распознавание духов", "Евангелизм", "Вера", 
+  "Даяние", "Исцеление", "Помощь", "Гостеприимство", "Знание", 
+  "Лидерство", "Милосердие", "Пророчество", "Служение", "Учительство", "Мудрость"
+];
+
+// --- MAIN APP COMPONENT ---
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('profile');
+  const [profiles, setProfiles] = useState([]);
+  const [needs, setNeeds] = useState([]);
+  const [achievements, setAchievements] = useState([]);
+  const [myProfile, setMyProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // 1. Authentication
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth error", err);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (currUser) => {
+      setUser(currUser);
+      if (currUser) setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Data Fetching
+  useEffect(() => {
+    if (!user) return;
+
+    // Listen to all profiles (public)
+    const profilesRef = collection(db, 'artifacts', appId, 'public', 'data', 'profiles');
+    const unsubProfiles = onSnapshot(profilesRef, (snap) => {
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setProfiles(data);
+      const found = data.find(p => p.id === user.uid);
+      if (found) setMyProfile(found);
+    }, (err) => console.error("Profiles stream error", err));
+
+    // Listen to needs/prayers (public)
+    const needsRef = collection(db, 'artifacts', appId, 'public', 'data', 'needs');
+    const unsubNeeds = onSnapshot(needsRef, (snap) => {
+      setNeeds(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => console.error("Needs stream error", err));
+
+    // Listen to achievements (public)
+    const achRef = collection(db, 'artifacts', appId, 'public', 'data', 'achievements');
+    const unsubAch = onSnapshot(achRef, (snap) => {
+      setAchievements(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => console.error("Achievements stream error", err));
+
+    return () => {
+      unsubProfiles();
+      unsubNeeds();
+      unsubAch();
+    };
+  }, [user]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-yellow-500">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-yellow-500"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24">
+      {/* Header */}
+      <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-4 sticky top-0 z-50">
+        <div className="max-w-md mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <div className="bg-yellow-500 p-1.5 rounded-lg text-slate-950">
+              <Flame size={20} fill="currentColor" />
+            </div>
+            <h1 className="font-black text-lg tracking-tighter uppercase">Подключение</h1>
+          </div>
+          <div className="text-[10px] bg-slate-800 px-2 py-1 rounded border border-slate-700 font-mono">
+            ID: {user?.uid.substring(0, 8)}
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-md mx-auto p-4 animate-in fade-in duration-500">
+        {activeTab === 'profile' && <ProfileTab myProfile={myProfile} userId={user.uid} />}
+        {activeTab === 'market' && <MarketTab profiles={profiles} currentUserId={user.uid} />}
+        {activeTab === 'needs' && <NeedsTab needs={needs} userId={user.uid} userName={myProfile?.name} />}
+        {activeTab === 'achievements' && <AchievementsTab achievements={achievements} userId={user.uid} userName={myProfile?.name} />}
+      </main>
+
+      {/* Bottom Nav */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 p-2 pb-6 z-50">
+        <div className="max-w-md mx-auto flex justify-around items-center">
+          <NavBtn icon={<User size={20} />} label="Я" active={activeTab === 'profile'} onClick={() => setActiveTab('profile')} />
+          <NavBtn icon={<Users size={20} />} label="Биржа" active={activeTab === 'market'} onClick={() => setActiveTab('market')} />
+          <NavBtn icon={<Heart size={20} />} label="Молитва" active={activeTab === 'needs'} onClick={() => setActiveTab('needs')} />
+          <NavBtn icon={<Award size={20} />} label="Успехи" active={activeTab === 'achievements'} onClick={() => setActiveTab('achievements')} />
+        </div>
+      </nav>
+    </div>
+  );
+}
+
+// --- SUB-COMPONENTS ---
+
+function NavBtn({ icon, label, active, onClick }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${active ? 'text-yellow-500' : 'text-slate-500'}`}
+    >
+      {icon}
+      <span className="text-[10px] font-bold uppercase tracking-widest">{label}</span>
+    </button>
+  );
+}
+
+// 1. Profile Tab
+function ProfileTab({ myProfile, userId }) {
+  const [isEditing, setIsEditing] = useState(!myProfile);
+  const [formData, setFormData] = useState(myProfile || {
+    name: '',
+    tg: '',
+    spiritualGifts: [],
+    customGift: '',
+    professionalSkill: '',
+    currentNeed: ''
+  });
+
+  const handleSave = async () => {
+    if (!formData.name) return alert("Введите имя");
+    const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', userId);
+    await setDoc(profileRef, {
+      ...formData,
+      updatedAt: serverTimestamp()
+    });
+    setIsEditing(false);
+  };
+
+  const toggleGift = (gift) => {
+    const gifts = [...formData.spiritualGifts];
+    if (gifts.includes(gift)) {
+      setFormData({...formData, spiritualGifts: gifts.filter(g => g !== gift)});
+    } else {
+      setFormData({...formData, spiritualGifts: [...gifts, gift]});
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <div className="space-y-6">
+        <section className="bg-slate-900 rounded-3xl p-6 border border-slate-800">
+          <h3 className="text-yellow-500 font-black uppercase text-xs tracking-widest mb-4">Основная информация</h3>
+          <input 
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 mb-3" 
+            placeholder="Ваше имя и фамилия"
+            value={formData.name}
+            onChange={e => setFormData({...formData, name: e.target.value})}
+          />
+          <input 
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3" 
+            placeholder="Telegram @username"
+            value={formData.tg}
+            onChange={e => setFormData({...formData, tg: e.target.value})}
+          />
+        </section>
+
+        <section className="bg-slate-900 rounded-3xl p-6 border border-slate-800">
+          <h3 className="text-yellow-500 font-black uppercase text-xs tracking-widest mb-4">Духовные Дары</h3>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {SPIRITUAL_GIFTS.map(gift => (
+              <button 
+                key={gift}
+                onClick={() => toggleGift(gift)}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${formData.spiritualGifts.includes(gift) ? 'bg-yellow-500 text-slate-950' : 'bg-slate-800 text-slate-400 border border-slate-700'}`}
+              >
+                {gift}
+              </button>
+            ))}
+          </div>
+          <input 
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3" 
+            placeholder="Свой вариант дара..."
+            value={formData.customGift}
+            onChange={e => setFormData({...formData, customGift: e.target.value})}
+          />
+        </section>
+
+        <section className="bg-slate-900 rounded-3xl p-6 border border-slate-800">
+          <h3 className="text-blue-400 font-black uppercase text-xs tracking-widest mb-4">Сторона А: Я умею / Ресурс</h3>
+          <textarea 
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 h-24 text-sm" 
+            placeholder="Опишите ваши навыки: профессиональные, творческие или бытовые. Чем вы можете быть полезны семье?"
+            value={formData.professionalSkill}
+            onChange={e => setFormData({...formData, professionalSkill: e.target.value})}
+          />
+        </section>
+
+        <section className="bg-slate-900 rounded-3xl p-6 border border-slate-800">
+          <h3 className="text-red-400 font-black uppercase text-xs tracking-widest mb-4">Сторона Б: Мне нужно / Нужда</h3>
+          <textarea 
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 h-24 text-sm" 
+            placeholder="В какой помощи вы нуждаетесь сегодня? (совет, молитва, физическая помощь, обучение)"
+            value={formData.currentNeed}
+            onChange={e => setFormData({...formData, currentNeed: e.target.value})}
+          />
+        </section>
+
+        <button onClick={handleSave} className="w-full bg-yellow-500 text-slate-950 p-4 rounded-2xl font-black uppercase tracking-widest">Сохранить профиль</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-4 bg-slate-900 p-6 rounded-3xl border border-slate-800 relative overflow-hidden">
+        <div className="w-16 h-16 bg-yellow-500/10 rounded-2xl flex items-center justify-center text-yellow-500 border border-yellow-500/20">
+          <User size={32} />
+        </div>
+        <div>
+          <h2 className="text-xl font-black uppercase tracking-tight">{myProfile.name}</h2>
+          <p className="text-slate-500 text-sm">{myProfile.tg}</p>
+        </div>
+        <button onClick={() => setIsEditing(true)} className="absolute top-4 right-4 text-slate-500 hover:text-yellow-500">
+          <MessageSquare size={18} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-slate-900 p-5 rounded-3xl border border-slate-800">
+          <div className="flex items-center gap-2 text-blue-400 mb-2">
+            <Briefcase size={14} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Я даю</span>
+          </div>
+          <p className="text-xs text-slate-300 line-clamp-3">{myProfile.professionalSkill || 'Не заполнено'}</p>
+        </div>
+        <div className="bg-slate-900 p-5 rounded-3xl border border-slate-800">
+          <div className="flex items-center gap-2 text-red-400 mb-2">
+            <HelpCircle size={14} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Мне нужно</span>
+          </div>
+          <p className="text-xs text-slate-300 line-clamp-3">{myProfile.currentNeed || 'Не заполнено'}</p>
+        </div>
+      </div>
+
+      <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800">
+        <h3 className="text-[10px] font-black uppercase tracking-widest text-yellow-500 mb-3">Мои дары</h3>
+        <div className="flex flex-wrap gap-2">
+          {myProfile.spiritualGifts.map(g => (
+            <span key={g} className="bg-slate-800 text-slate-300 px-3 py-1 rounded-lg text-xs border border-slate-700">{g}</span>
+          ))}
+          {myProfile.customGift && <span className="bg-yellow-500/10 text-yellow-500 px-3 py-1 rounded-lg text-xs border border-yellow-500/20">{myProfile.customGift}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 2. Market/Matching Tab
+function MarketTab({ profiles, currentUserId }) {
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  const filtered = profiles.filter(p => 
+    p.id !== currentUserId && 
+    (p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+     p.professionalSkill.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="relative">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+        <input 
+          className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 pl-12 text-sm focus:border-yellow-500 outline-none"
+          placeholder="Найти по таланту или имени..."
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      <div className="space-y-3">
+        {filtered.map(p => (
+          <div key={p.id} className="bg-slate-900 p-5 rounded-3xl border border-slate-800 group transition-all hover:border-slate-600">
+            <div className="flex justify-between items-start mb-3">
+              <h4 className="font-black text-sm uppercase tracking-tight text-yellow-500">{p.name}</h4>
+              <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold">{p.tg}</span>
+            </div>
+            <div className="space-y-2">
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/50">
+                <span className="text-[8px] font-black uppercase tracking-widest text-blue-400 block mb-1">Ресурс / Могу помочь:</span>
+                <p className="text-xs text-slate-300 italic">"{p.professionalSkill}"</p>
+              </div>
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/50">
+                <span className="text-[8px] font-black uppercase tracking-widest text-red-400 block mb-1">Нужда / Ищу помощь:</span>
+                <p className="text-xs text-slate-400">"{p.currentNeed}"</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// 3. Needs & Prayers Tab
+function NeedsTab({ needs, userId, userName }) {
+  const [text, setText] = useState('');
+
+  const postNeed = async () => {
+    if (!text) return;
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'needs'), {
+      userId,
+      userName: userName || 'Аноним',
+      text,
+      status: 'pending',
+      createdAt: serverTimestamp()
+    });
+    setText('');
+  };
+
+  const markAnswered = async (id) => {
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'needs', id), {
+      status: 'answered'
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-slate-900 p-5 rounded-3xl border border-slate-800">
+        <h3 className="text-yellow-500 font-black uppercase text-xs tracking-widest mb-3">Стена молитвы</h3>
+        <textarea 
+          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 h-20 text-sm mb-3" 
+          placeholder="Напишите вашу молитвенную просьбу или нужду..."
+          value={text}
+          onChange={e => setText(e.target.value)}
+        />
+        <button onClick={postNeed} className="w-full bg-slate-100 text-slate-950 p-3 rounded-xl font-black uppercase text-xs tracking-widest">Опубликовать</button>
+      </div>
+
+      <div className="space-y-3">
+        {needs.sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds).map(n => (
+          <div key={n.id} className={`p-5 rounded-3xl border ${n.status === 'answered' ? 'bg-green-500/5 border-green-500/20' : 'bg-slate-900 border-slate-800'}`}>
+            <div className="flex justify-between items-start mb-2">
+              <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">{n.userName}</span>
+              {n.status === 'answered' && <CheckCircle className="text-green-500" size={16} />}
+            </div>
+            <p className={`text-sm ${n.status === 'answered' ? 'text-green-200' : 'text-slate-300'}`}>{n.text}</p>
+            {n.userId === userId && n.status !== 'answered' && (
+              <button 
+                onClick={() => markAnswered(n.id)}
+                className="mt-3 text-[10px] font-black uppercase text-yellow-500 tracking-tighter"
+              >
+                Отметить как "Есть ответ!"
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// 4. Achievements Tab
+function AchievementsTab({ achievements, userId, userName }) {
+  const [msg, setMsg] = useState('');
+
+  const postAch = async () => {
+    if (!msg) return;
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'achievements'), {
+      userId,
+      userName: userName || 'Студент',
+      msg,
+      createdAt: serverTimestamp()
+    });
+    setMsg('');
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-yellow-500 p-5 rounded-3xl text-slate-950">
+        <h3 className="font-black uppercase text-xs tracking-widest mb-3">Поделиться успехом</h3>
+        <input 
+          className="w-full bg-white/20 border border-black/10 rounded-xl p-3 text-sm mb-3 placeholder:text-slate-700 font-bold" 
+          placeholder="Я прошел тест 5 урока! / Нашел призвание!"
+          value={msg}
+          onChange={e => setMsg(e.target.value)}
+        />
+        <button onClick={postAch} className="w-full bg-slate-950 text-white p-3 rounded-xl font-black uppercase text-xs tracking-widest">Сбросить в ленту</button>
+      </div>
+
+      <div className="space-y-3">
+        {achievements.sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds).map(a => (
+          <div key={a.id} className="bg-slate-900 p-5 rounded-3xl border border-slate-800 flex items-center gap-4">
+            <div className="w-10 h-10 bg-yellow-500/10 rounded-xl flex items-center justify-center text-yellow-500 flex-shrink-0">
+              <Award size={20} />
+            </div>
+            <div>
+              <p className="text-xs text-slate-300 font-bold leading-tight"><span className="text-yellow-500">{a.userName}:</span> {a.msg}</p>
+              <span className="text-[8px] text-slate-600 uppercase font-black tracking-widest">Достижение получено</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
